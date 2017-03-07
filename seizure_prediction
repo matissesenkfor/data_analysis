@@ -1,0 +1,115 @@
+def load_clinical_eeg_data(datapath, sub):
+    # input arguments:
+    # datapath (string): path to the root directory
+    # sub (string): subject ID (e.g. chb01, chb02, etc)
+    
+    # output:
+    # eegdata (numpy array): samples x channels data matrix
+    # eegevents (pandas dataframe): labels and chunks
+    # channel_names (list): names of the channels
+    import pandas as pd
+    alldata = pd.read_csv(os.path.join(datapath, 'train', sub + '.csv'))
+    alldata.rename(columns={'Unnamed: 0': 'Index'})
+    eegevents = alldata[['labels', 'chunks']]
+    alldata.drop(['Unnamed: 0', 'labels', 'chunks'], axis=1, inplace=True)
+    names = alldata.keys()
+    return alldata.iloc[:].as_matrix(), eegevents, names
+    
+    
+import os
+
+data, label_chunk, nodes =load_clinical_eeg_data('/Users/Matisse/Desktop', 'chb01')
+
+#print data, label_chunk, nodes
+
+
+# converting labels and chunks from pandas dataframe to numpy array. isolating the labels
+labels_and_chunks=label_chunk.as_matrix()
+labels=labels_and_chunks[:,0]
+chunks=labels_and_chunks[:,1]
+#print type(labels)
+#print labels
+#print labels.shape
+
+
+import numpy as np
+
+def take_max_every_64_points(x):
+    i=0; 
+    max_array=[]
+    while(i<(x.shape[0])):
+        array=x[i:i+65]
+        max_array.append(np.max(array))
+        i+=64
+    max_array=np.array(max_array)
+    return max_array
+
+dataset=np.apply_along_axis(take_max_every_64_points, 0, data)
+labels = np.apply_along_axis(take_max_every_64_points, 0, labels)
+chunks = np.apply_along_axis(take_max_every_64_points, 0, chunks)
+#print dataset.shape, labels.shape, chunks.shape
+#print chunks
+
+
+# replacing chunk numbers with their indexes
+
+chunks_numbers = np.unique(chunks, return_index=True)
+#print chunks_numbers
+
+i = 1
+new_chunks = []
+total_chunks = chunks_numbers[0].shape[0]
+
+while i < total_chunks:
+    for j in range(chunks_numbers[1][i-1], chunks_numbers[1][i]):
+        new_chunks.append(i-1)
+    i += 1
+for j in range(chunks_numbers[1][total_chunks-1], chunks.shape[0]):
+    new_chunks.append(i-1)
+new_chunks = np.array(new_chunks)
+# print new_chunks.shape
+# chunks_numbers = np.unique(new_chunks, return_index=True)
+# print chunks_numbers
+chunks = new_chunks
+
+
+# creating new labels for seizure, pre- and post- seizure
+# in each chunk - 10 minutes before/after sezure = 600 samples X 599
+# -1 = pre, 1 = seizure, 0 = post
+
+#print labels.shape
+chunks_numbers = np.unique(chunks, return_index=True)
+#(array([0, 1, 2, 3, 4, 5]), array([   0, 1203, 2430, 3670, 4921, 6211]))
+
+i = 1
+while i < total_chunks:
+    start = chunks_numbers[1][i-1]
+    end = chunks_numbers[1][i]-1
+    for j in range(start, end):
+        labels[j] = -1
+        if labels[j+1] == 1:
+            break
+    i += 1
+
+start = end + 1
+end = labels.shape[0]
+for j in range(start, end):
+    labels[j] = -1
+    if labels[j+1] == 1:
+        break
+        
+
+import sklearn.cross_validation as cv
+
+training_set, testing_set, training_labels, testing_labels = cv.train_test_split(dataset, labels)
+
+
+# Unweighted logistic regression - gives accuracy of about .75
+
+from sklearn.linear_model import LogisticRegression
+
+model1 = LogisticRegression()
+model1.fit(training_set, training_labels)
+print "Training accuracy:" + str(model1.score(dataset,labels))
+model1.score(testing_set, testing_labels)
+print"Testing accuracy"+ str(model1.score(testing_set,testing_labels))
